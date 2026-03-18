@@ -67,6 +67,10 @@ export class BinanceService implements OnModuleInit {
     return this.replenishService.getUSDTDeposits(limit);
   }
 
+  checkAllDeposit() {
+    return this.replenishService.checkAllDeposits();
+  }
+
   getSuccessfulDeposits(query: GetSuccessDepositQueryDto) {
     const { coin, limit } = query;
 

@@ -19,6 +19,11 @@ export class BinanceController {
     return this.binanceService.getDepositHistory();
   }
 
+  @Get('check-all-deposits')
+  checkAllDeposits() {
+    return this.binanceService.checkAllDeposit();
+  }
+
   @Get('deposits')
   getDeposits(@Query() query: DepositsQuery) {
     return this.binanceService.getDeposits(query);

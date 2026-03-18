@@ -1,3 +1,5 @@
+/* eslint-disable prefer-const */
+/* eslint-disable @typescript-eslint/no-unused-vars */
 /* eslint-disable @typescript-eslint/no-unsafe-argument */
 /* eslint-disable @typescript-eslint/no-unsafe-return */
 /* eslint-disable @typescript-eslint/no-unsafe-call */
@@ -8,53 +10,145 @@ import { Spot } from '@binance/connector';
 import * as crypto from 'crypto';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
+import { BinanceConfig } from 'src/configs/services/binance.config';
 
 @Injectable()
 export class ReplenishBinanceService {
   private readonly logger = new Logger(ReplenishBinanceService.name);
 
-  private readonly binance_api_key: string =
-    's1SkgWuCYweyjaBAckyP7sad3HnhWOflL0Rd7b0eg3XC9Ilz32GNwdut89fgR2bh';
+  private readonly binance_api_key: string;
 
-  private readonly binance_secret_key: string =
-    'gZ4X8siWuOm58TJOyzv2p80foS6MH0gUNfYGoWMqJrCws3YDtUKs6rfFa3ObxZ4z';
+  private readonly binance_secret_key: string;
 
-  constructor(private readonly httpService: HttpService) {}
+  constructor(
+    private readonly httpService: HttpService,
+    private readonly binanceConfig: BinanceConfig,
+  ) {
+    this.binance_api_key = binanceConfig.api_key;
+    this.binance_secret_key = binanceConfig.secret_key;
+  }
 
   async getUSDTBalance(client: Spot) {
     try {
-      const response = await client.account();
-      const accountInfo = response.data;
+      // 1. Спот баланс
+      const spotResponse = await client.account();
+      const spotBalances = spotResponse.data.balances;
+      const spotUSDT = spotBalances.find((b) => b.asset === 'USDT');
 
-      // Ищем USDT в балансах
-      const usdtBalance = accountInfo.balances.find(
-        (balance) => balance.asset === 'USDT',
-      );
+      const spotFree = spotUSDT ? parseFloat(spotUSDT.free) : 0;
+      const spotLocked = spotUSDT ? parseFloat(spotUSDT.locked) : 0;
 
-      console.log(usdtBalance, 'usdtBalance');
+      this.logger.log(`Спот USDT: ${spotFree + spotLocked}`);
 
-      if (!usdtBalance) {
-        return {
-          asset: 'USDT',
-          free: 0,
-          locked: 0,
-          total: 0,
-        };
+      // 2. Funding баланс (көп учурда USDT ушул жерде)
+      let fundingFree = 0;
+      try {
+        const fundingResponse = await client.fundingAsset();
+        const fundingData = fundingResponse.data;
+        const fundingUSDT = fundingData.find((f) => f.asset === 'USDT');
+        fundingFree = fundingUSDT ? parseFloat(fundingUSDT.free) : 0;
+        this.logger.log(`Funding USDT: ${fundingFree}`);
+      } catch (e) {
+        this.logger.warn('Funding баланс алуу мүмкүн эмес');
       }
 
-      const free = parseFloat(usdtBalance.free);
-      const locked = parseFloat(usdtBalance.locked);
+      // 3. Earn баланс (стейкинг)
+      let earnFree = 0;
+      try {
+        const earnResponse = await client.stakingProductPosition();
+        console.log(earnResponse, 'earn response');
 
-      return {
+        // Эгер USDT стейкингде болсо...
+      } catch (e) {
+        // Ignore
+      }
+
+      const totalUSDT = spotFree + spotLocked + fundingFree;
+
+      const result = {
         asset: 'USDT',
-        free: free,
-        locked: locked,
-        total: free + locked,
+        spot: {
+          free: spotFree,
+          locked: spotLocked,
+          total: spotFree + spotLocked,
+        },
+        funding: {
+          free: fundingFree,
+          total: fundingFree,
+        },
+        total: totalUSDT,
+        note: totalUSDT === 2 ? '✅ Туура' : '⚠️ Дагы текшерүү керек',
       };
+
+      this.logger.log(`Жалпы USDT: ${totalUSDT}`);
+      return result;
     } catch (error) {
-      console.log(error, 'error');
+      this.logger.error(`Error getting USDT balance: ${error.message}`);
       throw new Error(`Failed to get USDT balance: ${error.message}`);
     }
+  }
+
+  async checkAllDeposits(coin: string = 'USDT') {
+    try {
+      // Бардык статустарды алуу (анын ичинде 0 - processing, 6 - credited but cannot withdraw)
+      const allDeposits = await this.getDepositHistory({
+        coin,
+        limit: 100,
+      });
+
+      // Статустар боюнча бөлүү
+      const pending = allDeposits.filter((d) => d.statusCode === 0);
+      const success = allDeposits.filter((d) => d.statusCode === 1);
+      const credited = allDeposits.filter((d) => d.statusCode === 6);
+
+      return {
+        message: this.getStatusMessage(
+          pending.length,
+          success.length,
+          credited.length,
+        ),
+        pending: pending.map((d) => ({
+          amount: d.amount,
+          time: d.time,
+          note: '⏳ Тастыктоо күтүлүүдө',
+        })),
+        success: success.map((d) => ({
+          amount: d.amount,
+          time: d.time,
+          note: '✅ Баланска кошулду',
+        })),
+        credited: credited.map((d) => ({
+          amount: d.amount,
+          time: d.time,
+          note: '⚠️ Баланска кошулды, бирок чыгаруу мүмкүн эмес (коопсуздук текшерүүсү)',
+        })),
+        totalFound: allDeposits.length,
+        yourTransaction: 'TXID менен издеп көрүңүз',
+      };
+    } catch (error) {
+      this.logger.error(`Error checking deposits: ${error.message}`);
+      throw error;
+    }
+  }
+
+  private getStatusMessage(
+    pending: number,
+    success: number,
+    credited: number,
+  ): string {
+    if (pending > 0) {
+      return `⏳ ${pending} транзакция тастыктоо күтүүдө. Бир аз күтүңүз.`;
+    }
+    if (credited > 0) {
+      return `⚠️ ${credited} транзакция баланска кошулду, бирок чыгаруу убактылуу чектелген.`;
+    }
+    if (success === 0) {
+      return `❌ Эч кандай транзакция табылган жок. Төмөнкүлөрдү текшериңиз:
+        1. TXID туурабы?
+        2. Тармак (network) туурабы?
+        3. Сумма минималдуу лимиттен жогорубу?`;
+    }
+    return `✅ ${success} транзакция табылды`;
   }
 
   async getDepositHistory(params?: {
