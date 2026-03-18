@@ -7,18 +7,23 @@ import { HttpService } from '@nestjs/axios';
 import { Injectable, Logger } from '@nestjs/common';
 import { firstValueFrom } from 'rxjs';
 import * as crypto from 'crypto';
+import { BinanceConfig } from 'src/configs/services/binance.config';
 
 @Injectable()
 export class WithdrawBinanceService {
   private readonly logger = new Logger(WithdrawBinanceService.name);
 
-  private readonly binance_api_key: string =
-    's1SkgWuCYweyjaBAckyP7sad3HnhWOflL0Rd7b0eg3XC9Ilz32GNwdut89fgR2bh';
+  private readonly binance_api_key: string;
 
-  private readonly binance_secret_key: string =
-    'gZ4X8siWuOm58TJOyzv2p80foS6MH0gUNfYGoWMqJrCws3YDtUKs6rfFa3ObxZ4z';
+  private readonly binance_secret_key: string;
 
-  constructor(private readonly httpService: HttpService) {}
+  constructor(
+    private readonly httpService: HttpService,
+    private readonly binanceConfig: BinanceConfig,
+  ) {
+    this.binance_api_key = binanceConfig.api_key;
+    this.binance_secret_key = binanceConfig.secret_key;
+  }
 
   /**
    * Получить историю выводов (withdraw history)

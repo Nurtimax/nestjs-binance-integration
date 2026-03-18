@@ -14,6 +14,21 @@ export class BinanceController {
     return this.binanceService.getUSDTBalance();
   }
 
+  @Get('balance/all-products')
+  async getAllBalances() {
+    return this.binanceService.getAllBalancesAcrossProducts();
+  }
+
+  @Get('check-ip')
+  async checkMyIP() {
+    return this.binanceService.checkMyIP();
+  }
+
+  @Get('estimated-balance')
+  async getEstimatedBalanceInUSDT() {
+    return this.binanceService.getEstimatedBalanceInUSDT();
+  }
+
   @Get('get-balance-history')
   getBalaceHistory() {
     return this.binanceService.getDepositHistory();

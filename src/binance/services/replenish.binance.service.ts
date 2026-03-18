@@ -1,11 +1,9 @@
-/* eslint-disable prefer-const */
-/* eslint-disable @typescript-eslint/no-unused-vars */
 /* eslint-disable @typescript-eslint/no-unsafe-argument */
 /* eslint-disable @typescript-eslint/no-unsafe-return */
 /* eslint-disable @typescript-eslint/no-unsafe-call */
 /* eslint-disable @typescript-eslint/no-unsafe-member-access */
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { Spot } from '@binance/connector';
 import * as crypto from 'crypto';
 import { HttpService } from '@nestjs/axios';
@@ -13,8 +11,10 @@ import { firstValueFrom } from 'rxjs';
 import { BinanceConfig } from 'src/configs/services/binance.config';
 
 @Injectable()
-export class ReplenishBinanceService {
+export class ReplenishBinanceService implements OnModuleInit {
   private readonly logger = new Logger(ReplenishBinanceService.name);
+
+  private client: Spot;
 
   private readonly binance_api_key: string;
 
@@ -24,13 +24,26 @@ export class ReplenishBinanceService {
     private readonly httpService: HttpService,
     private readonly binanceConfig: BinanceConfig,
   ) {
+    console.log(binanceConfig.api_key, 'api key', binanceConfig.secret_key);
+
     this.binance_api_key = binanceConfig.api_key;
     this.binance_secret_key = binanceConfig.secret_key;
   }
 
+  onModuleInit() {
+    const client = new Spot(
+      this.binanceConfig.api_key,
+      this.binanceConfig.secret_key,
+      {
+        baseURL: 'https://api.binance.com',
+      },
+    );
+    this.client = client;
+  }
+
   async getUSDTBalance(client: Spot) {
     try {
-      // 1. Спот баланс
+      // 1. Спот баланс (client.account() иштейт)
       const spotResponse = await client.account();
       const spotBalances = spotResponse.data.balances;
       const spotUSDT = spotBalances.find((b) => b.asset === 'USDT');
@@ -40,29 +53,65 @@ export class ReplenishBinanceService {
 
       this.logger.log(`Спот USDT: ${spotFree + spotLocked}`);
 
-      // 2. Funding баланс (көп учурда USDT ушул жерде)
+      // 2. Funding баланс - POST сурамы менен
       let fundingFree = 0;
       try {
-        const fundingResponse = await client.fundingAsset();
+        const timestamp = Date.now();
+
+        // Funding баланс алуу үчүн параметрлер
+        const params = {
+          timestamp,
+          recvWindow: 60000,
+        };
+
+        // Подпись генерациясы
+        const sortedKeys = Object.keys(params).sort();
+        const rawQueryString = sortedKeys
+          .map((key) => `${key}=${params[key]}`)
+          .join('&');
+
+        const signature = crypto
+          .createHmac('sha256', this.binance_secret_key)
+          .update(rawQueryString)
+          .digest('hex');
+
+        // POST сурамы (GET эмес!)
+        const fundingResponse = await firstValueFrom(
+          this.httpService.post(
+            'https://api.binance.com/sapi/v1/asset/get-funding-asset',
+            null, // body (жок)
+            {
+              headers: {
+                'X-MBX-APIKEY': this.binance_api_key,
+                'Content-Type': 'application/json',
+              },
+              params: {
+                ...params,
+                signature,
+              },
+            },
+          ),
+        );
+
+        // Жоопту иштетүү
         const fundingData = fundingResponse.data;
-        const fundingUSDT = fundingData.find((f) => f.asset === 'USDT');
+        this.logger.log('Funding жообу:', fundingData);
+
+        const fundingUSDT = fundingData.find((f: any) => f.asset === 'USDT');
         fundingFree = fundingUSDT ? parseFloat(fundingUSDT.free) : 0;
+
         this.logger.log(`Funding USDT: ${fundingFree}`);
       } catch (e) {
-        this.logger.warn('Funding баланс алуу мүмкүн эмес');
+        this.logger.warn(`Funding баланс алуу мүмкүн эмес: ${e.message}`);
+        if (e.response?.data) {
+          this.logger.error(`Funding катасы:`, e.response.data);
+        }
+
+        // Эгер funding иштебесе, башка эндпоинт менен аракет кылабыз
+        await this.tryAlternativeFundingBalance();
       }
 
-      // 3. Earn баланс (стейкинг)
-      let earnFree = 0;
-      try {
-        const earnResponse = await client.stakingProductPosition();
-        console.log(earnResponse, 'earn response');
-
-        // Эгер USDT стейкингде болсо...
-      } catch (e) {
-        // Ignore
-      }
-
+      // 3. Total
       const totalUSDT = spotFree + spotLocked + fundingFree;
 
       const result = {
@@ -77,7 +126,13 @@ export class ReplenishBinanceService {
           total: fundingFree,
         },
         total: totalUSDT,
-        note: totalUSDT === 2 ? '✅ Туура' : '⚠️ Дагы текшерүү керек',
+        expected: 2,
+        diff: (2 - totalUSDT).toFixed(8),
+        note:
+          totalUSDT === 2
+            ? '✅ Туура'
+            : `❌ ${2 - totalUSDT} USDT дагы бир жерде`,
+        suggestion: totalUSDT < 2 ? 'Башка кошелектерди текшериңиз' : undefined,
       };
 
       this.logger.log(`Жалпы USDT: ${totalUSDT}`);
@@ -85,6 +140,406 @@ export class ReplenishBinanceService {
     } catch (error) {
       this.logger.error(`Error getting USDT balance: ${error.message}`);
       throw new Error(`Failed to get USDT balance: ${error.message}`);
+    }
+  }
+
+  private generateSignature(params: Record<string, any>): string {
+    const queryString = Object.keys(params)
+      .sort()
+      .map((key) => `${key}=${params[key]}`)
+      .join('&');
+
+    console.log('Query String for Signature:', queryString); // Текшерүү
+    const signature = crypto
+      .createHmac('sha256', this.binance_secret_key)
+      .update(queryString)
+      .digest('hex');
+    console.log('Generated Signature:', signature); // Текшерүү
+    return signature;
+  }
+
+  // Альтернативдүү метод
+  async tryAlternativeFundingBalance() {
+    try {
+      const timestamp = Date.now();
+      const params = { timestamp, recvWindow: 60000 };
+
+      const signature = this.generateSignature(params);
+
+      // Башка эндпоинт: accountSnapshot
+      const snapshotResponse = await firstValueFrom(
+        this.httpService.get(
+          'https://api.binance.com/sapi/v1/accountSnapshot',
+          {
+            headers: { 'X-MBX-APIKEY': this.binance_api_key },
+            params: {
+              ...params,
+              type: 'SPOT',
+              signature,
+            },
+          },
+        ),
+      );
+
+      const snapshot = snapshotResponse.data;
+      this.logger.log('Account snapshot:', snapshot);
+
+      // Snapshot ичиндеги баланстарды талдоо
+      if (snapshot.snapshotVos && snapshot.snapshotVos.length > 0) {
+        const latest = snapshot.snapshotVos[0];
+        const balances = latest.data.balances;
+        const usdtBalance = balances.find((b: any) => b.asset === 'USDT');
+        if (usdtBalance) {
+          this.logger.log(`Snapshot USDT: ${usdtBalance.free}`);
+          return parseFloat(usdtBalance.free);
+        }
+      }
+
+      return 0;
+    } catch (e) {
+      console.log(e, 'error');
+
+      this.logger.warn('Snapshot дагы иштебеди');
+      return 0;
+    }
+  }
+
+  async getAllBalancesAcrossProducts() {
+    const results = {
+      spot: { usdt: 0, total: 0 },
+      funding: { usdt: 0, total: 0 },
+      earn: { usdt: 0, total: 0 },
+      staking: { usdt: 0, total: 0 },
+      margin: { usdt: 0, total: 0 },
+      futures: { usdt: 0, total: 0 },
+      p2p: { usdt: 0, total: 0 },
+      totalUSDT: 0,
+      timestamp: new Date().toISOString(),
+    };
+
+    // 1. SPOT (иштеп жатат)
+    try {
+      const spot = await this.client.account();
+      const spotBalances = spot.data.balances;
+      const spotUSDT = spotBalances.find((b) => b.asset === 'USDT');
+      results.spot.usdt = spotUSDT
+        ? parseFloat(spotUSDT.free) + parseFloat(spotUSDT.locked)
+        : 0;
+      results.spot.total = spotBalances.filter(
+        (b) => parseFloat(b.free) > 0 || parseFloat(b.locked) > 0,
+      ).length;
+    } catch (e) {
+      this.logger.error('Spot error:', e.message);
+    }
+
+    // 2. FUNDING (POST менен)
+    try {
+      const timestamp = Date.now();
+      const params = { timestamp, recvWindow: 60000 };
+      const signature = this.generateSignature(params);
+
+      console.log(this.binance_api_key, 'this.binance_api_key');
+
+      const funding = await firstValueFrom(
+        this.httpService.post(
+          'https://api.binance.com/sapi/v1/asset/get-funding-asset',
+          null,
+          {
+            headers: {
+              'X-MBX-APIKEY': this.binance_api_key,
+              'Content-Type': 'application/json',
+            },
+            params: { ...params, signature },
+          },
+        ),
+      );
+
+      const fundingUSDT = funding.data.find((f: any) => f.asset === 'USDT');
+      results.funding.usdt = fundingUSDT ? parseFloat(fundingUSDT.free) : 0;
+      results.funding.total = funding.data.filter(
+        (f: any) => parseFloat(f.free) > 0,
+      ).length;
+    } catch (e) {
+      this.logger.error('Funding error:', e.message);
+    }
+
+    // 3. SIMPLE EARN (стейкинг)
+    try {
+      const timestamp = Date.now();
+      const params = { timestamp, recvWindow: 60000 };
+      const signature = this.generateSignature(params);
+
+      // Flexible Earn позициялары
+      const flexible = await firstValueFrom(
+        this.httpService.get(
+          'https://api.binance.com/sapi/v1/simple-earn/flexible/position',
+          {
+            headers: { 'X-MBX-APIKEY': this.binance_api_key },
+            params: { ...params, signature },
+          },
+        ),
+      );
+
+      // Locked Earn позициялары
+      const locked = await firstValueFrom(
+        this.httpService.get(
+          'https://api.binance.com/sapi/v1/simple-earn/locked/position',
+          {
+            headers: { 'X-MBX-APIKEY': this.binance_api_key },
+            params: { ...params, signature },
+          },
+        ),
+      );
+
+      // USDT суммасын эсептөө
+      const flexibleUSDT =
+        flexible.data.rows
+          ?.filter((r: any) => r.asset === 'USDT')
+          .reduce(
+            (sum: number, r: any) => sum + parseFloat(r.totalAmount),
+            0,
+          ) || 0;
+
+      const lockedUSDT =
+        locked.data.rows
+          ?.filter((r: any) => r.asset === 'USDT')
+          .reduce((sum: number, r: any) => sum + parseFloat(r.amount), 0) || 0;
+
+      results.earn.usdt = flexibleUSDT + lockedUSDT;
+      results.earn.total =
+        (flexible.data.rows?.length || 0) + (locked.data.rows?.length || 0);
+    } catch (e) {
+      this.logger.error('Earn error:', e.message);
+    }
+
+    // 4. STAKING (атайын пакет менен) [citation:1]
+    try {
+      // npm install @binance/staking керек
+      // const stakingClient = new Staking({ configurationRestAPI: { apiKey, apiSecret } });
+      // const stakingPositions = await stakingClient.restAPI.getStakingProductList();
+      // эгер USDT стейкингде болсо...
+      results.staking.usdt = 0; // убактылуу
+    } catch (e) {
+      this.logger.error('Staking error:', e.message);
+    }
+
+    // 5. MARGIN
+    try {
+      const timestamp = Date.now();
+      const params = { timestamp, recvWindow: 60000 };
+      const signature = this.generateSignature(params);
+
+      const margin = await firstValueFrom(
+        this.httpService.get('https://api.binance.com/sapi/v1/margin/account', {
+          headers: { 'X-MBX-APIKEY': this.binance_api_key },
+          params: { ...params, signature },
+        }),
+      );
+
+      const marginUSDT = margin.data.userAssets?.find(
+        (a: any) => a.asset === 'USDT',
+      );
+      results.margin.usdt = marginUSDT
+        ? parseFloat(marginUSDT.free) + parseFloat(marginUSDT.locked)
+        : 0;
+      results.margin.total = margin.data.userAssets?.length || 0;
+    } catch (e) {
+      this.logger.error('Margin error:', e.message);
+    }
+
+    // 6. FUTURES [citation:4]
+    try {
+      const timestamp = Date.now();
+      const params = { timestamp, recvWindow: 60000 };
+      const signature = this.generateSignature(params);
+
+      const futures = await firstValueFrom(
+        this.httpService.get('https://fapi.binance.com/fapi/v2/account', {
+          headers: { 'X-MBX-APIKEY': this.binance_api_key },
+          params: { ...params, signature },
+        }),
+      );
+
+      const futuresUSDT = futures.data.assets?.find(
+        (a: any) => a.asset === 'USDT',
+      );
+      results.futures.usdt = futuresUSDT
+        ? parseFloat(futuresUSDT.walletBalance)
+        : 0;
+      results.futures.total = futures.data.assets?.length || 0;
+    } catch (e) {
+      this.logger.error('Futures error:', e.message);
+    }
+
+    // 7. P2P / Wallet Balance [citation:8]
+    try {
+      const timestamp = Date.now();
+      const params = { timestamp, recvWindow: 60000 };
+      const signature = this.generateSignature(params);
+
+      const wallet = await firstValueFrom(
+        this.httpService.get(
+          'https://api.binance.com/sapi/v1/asset/wallet/balance',
+          {
+            headers: { 'X-MBX-APIKEY': this.binance_api_key },
+            params: { ...params, signature },
+          },
+        ),
+      );
+
+      const walletUSDT = wallet.data.find((w: any) => w.asset === 'USDT');
+      results.p2p.usdt = walletUSDT ? parseFloat(walletUSDT.balance) : 0;
+      results.p2p.total = wallet.data.length;
+    } catch (e) {
+      this.logger.error('Wallet balance error:', e.message);
+    }
+
+    // 8. Жалпы USDT суммасы
+    results.totalUSDT =
+      results.spot.usdt +
+      results.funding.usdt +
+      results.earn.usdt +
+      results.staking.usdt +
+      results.margin.usdt +
+      results.futures.usdt +
+      results.p2p.usdt;
+
+    return results;
+  }
+
+  async checkMyIP() {
+    try {
+      const response = await firstValueFrom(
+        this.httpService.get('https://api.ipify.org?format=json'),
+      );
+
+      const myIP = response.data.ip;
+
+      return {
+        yourPublicIP: myIP,
+        message: 'Бул IP дарегин API уруксаттарына кошуңуз',
+        apiIPs: ['192.168.0.1', '192.168.0.100'], // сиздин учурдагы кошулган IP
+        suggestion: `API Management бөлүмүндө ${myIP} кошуңуз`,
+        curl: `curl ifconfig.me (терминалда териңиз)`,
+      };
+    } catch (error) {
+      return { error: error.message };
+    }
+  }
+
+  async getEstimatedBalanceInUSDT() {
+    try {
+      // 1. БАРДЫК КОШЕЛЕКТЕРДЕГИ БАЛАНСТАРДЫ АЛУУ
+      const allBalances = await this.getAllBalancesAcrossProducts();
+
+      // 2. БАРДЫК УНИКАЛДУУ МОНЕТАЛАРДЫ ЧОГУЛТУУ
+      const uniqueAssets = new Set<string>();
+      const assetBalances: Record<string, number> = {};
+
+      console.log(allBalances, 'all bald');
+
+      // Спот баланстар
+      for (const balance of (allBalances.spot as unknown as Array<any>) || []) {
+        if (
+          balance.asset &&
+          parseFloat(balance.free) + parseFloat(balance.locked) > 0
+        ) {
+          uniqueAssets.add(balance.asset);
+          assetBalances[balance.asset] =
+            (assetBalances[balance.asset] || 0) +
+            parseFloat(balance.free) +
+            parseFloat(balance.locked);
+        }
+      }
+
+      // Funding баланстар
+      for (const balance of (allBalances.funding as unknown as Array<any>) ||
+        []) {
+        if (balance.asset && parseFloat(balance.free) > 0) {
+          uniqueAssets.add(balance.asset);
+          assetBalances[balance.asset] =
+            (assetBalances[balance.asset] || 0) + parseFloat(balance.free);
+        }
+      }
+
+      // Earn баланстар
+      if (allBalances.earn?.usdt) {
+        assetBalances['USDT'] =
+          (assetBalances['USDT'] || 0) + allBalances.earn.usdt;
+        uniqueAssets.add('USDT');
+      }
+
+      // 3. АР БИР МОНЕТАНЫН БААСЫН АЛУУ (USDT менен баасы)
+      const prices: Record<string, number> = {};
+
+      // USDT өзүнүн баасы 1
+      prices['USDT'] = 1;
+      prices['BUSD'] = 1; // Stablecoinдер
+      prices['USDC'] = 1;
+      prices['DAI'] = 1;
+
+      // Башка монеталардын баасын алуу
+      const assetsToFetch = Array.from(uniqueAssets).filter((a) => !prices[a]);
+
+      for (const asset of assetsToFetch) {
+        try {
+          // Монетанын USDTдеги баасын алуу
+          const ticker = await this.client.tickerPrice(`${asset}USDT`);
+          prices[asset] = parseFloat(ticker.data.price);
+        } catch (e) {
+          console.log(e, 'e');
+
+          // Эгер USDT пары жок болсо, BTC менен аракет кылабыз
+          try {
+            const btcTicker = await this.client.tickerPrice(`${asset}BTC`);
+            const btcPrice = await this.client.tickerPrice('BTCUSDT');
+            prices[asset] =
+              parseFloat(btcTicker.data.price) *
+              parseFloat(btcPrice.data.price);
+          } catch (e2) {
+            console.log(e2, 'e2');
+
+            this.logger.warn(`Could not get price for ${asset}`);
+            prices[asset] = 0;
+          }
+        }
+      }
+
+      // 4. ЖАЛПЫ СУММАНЫ ЭСЕПТӨӨ
+      let totalUSDT = 0;
+      const breakdown: any[] = [];
+
+      for (const [asset, amount] of Object.entries(assetBalances)) {
+        const price = prices[asset] || 0;
+        const value = amount * price;
+
+        if (value > 0.01) {
+          // Кичине суммаларды көрсөтпөө
+          breakdown.push({
+            asset,
+            amount,
+            priceInUSDT: price,
+            valueInUSDT: value,
+          });
+          totalUSDT += value;
+        }
+      }
+
+      // Сортировка по убыванию
+      breakdown.sort((a, b) => b.valueInUSDT - a.valueInUSDT);
+
+      return {
+        totalEstimatedBalance: totalUSDT,
+        currency: 'USDT',
+        breakdown,
+        assetCount: breakdown.length,
+        timestamp: new Date().toISOString(),
+      };
+    } catch (error) {
+      this.logger.error(
+        `Error calculating estimated balance: ${error.message}`,
+      );
+      throw error;
     }
   }
 
@@ -230,6 +685,8 @@ export class ReplenishBinanceService {
         confirmTimes: deposit.confirmTimes,
       }));
     } catch (error) {
+      console.log(error, 'error');
+
       // Толук ката маалыматын көрсөтүү
       this.logger.error(`Error response data:`, error.response?.data);
       this.logger.error(`Error status: ${error.response?.status}`);

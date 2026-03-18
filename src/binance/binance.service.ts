@@ -51,8 +51,20 @@ export class BinanceService implements OnModuleInit {
     });
   }
 
+  getAllBalancesAcrossProducts() {
+    return this.replenishService.getAllBalancesAcrossProducts();
+  }
+
+  getEstimatedBalanceInUSDT() {
+    return this.replenishService.getEstimatedBalanceInUSDT();
+  }
+
   getUSDTBalance() {
     return this.replenishService.getUSDTBalance(this.client);
+  }
+
+  checkMyIP() {
+    return this.replenishService.checkMyIP();
   }
 
   getDepositHistory() {
