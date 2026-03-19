@@ -9,6 +9,7 @@ import * as crypto from 'crypto';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 import { BinanceConfig } from 'src/configs/services/binance.config';
+import { GetOrderHistoryQueryDto } from '../dto/get-order-history.dto';
 
 @Injectable()
 export class ReplenishBinanceService implements OnModuleInit {
@@ -41,9 +42,113 @@ export class ReplenishBinanceService implements OnModuleInit {
     this.client = client;
   }
 
+  async account() {
+    try {
+      const timestamp = Date.now();
+
+      const params = {
+        timestamp,
+      };
+
+      // Сортировка жана signature генерациясы
+      const queryString = Object.keys(params)
+        .sort()
+        .map((key) => `${key}=${params[key]}`)
+        .join('&');
+
+      const signature = crypto
+        .createHmac('sha256', this.binance_secret_key)
+        .update(queryString)
+        .digest('hex');
+
+      const response = await this.httpService.axiosRef.get(
+        'https://api.binance.com/api/v3/account',
+        {
+          headers: {
+            'X-MBX-APIKEY': this.binance_api_key,
+          },
+          params: {
+            ...params,
+            signature,
+          },
+        },
+      );
+
+      const resonseData = response.data;
+
+      const balances = resonseData?.balances;
+
+      if (Array.isArray(balances)) {
+        const reducedBalances = balances.filter((balance) =>
+          Number(balance.free),
+        );
+
+        console.log(reducedBalances, 'reduced balances');
+      }
+    } catch (error) {
+      console.log(error, 'error');
+    }
+  }
+
+  async order() {
+    try {
+      const timestamp = Date.now();
+
+      const params = {
+        symbol: 'TONUSDT',
+        timestamp,
+      };
+
+      // Сортировка жана signature генерациясы
+      const queryString = Object.keys(params)
+        .sort()
+        .map((key) => `${key}=${params[key]}`)
+        .join('&');
+
+      const signature = crypto
+        .createHmac('sha256', this.binance_secret_key)
+        .update(queryString)
+        .digest('hex');
+
+      const response = await this.httpService.axiosRef.get(
+        'https://api.binance.com/api/v3/order',
+        {
+          headers: {
+            'X-MBX-APIKEY': this.binance_api_key,
+          },
+          params: {
+            ...params,
+            signature,
+          },
+        },
+      );
+
+      console.log(response, 'response');
+    } catch (error) {
+      console.log(error, 'error');
+    }
+  }
+
+  async allOrders(params?: GetOrderHistoryQueryDto) {
+    try {
+      const responseOrders = await this.client.allOrders(params?.symbol, {
+        limit: params?.limit,
+      });
+
+      console.log(responseOrders.data, 'response order');
+      return responseOrders.data;
+    } catch (error) {
+      console.log(error, 'error');
+      return {
+        message: error?.message,
+        error,
+      };
+    }
+  }
+
   async getUSDTBalance(client: Spot) {
     try {
-      // 1. Спот баланс (client.account() иштейт)
+      // 1. Спот баланс
       const spotResponse = await client.account();
       const spotBalances = spotResponse.data.balances;
       const spotUSDT = spotBalances.find((b) => b.asset === 'USDT');
@@ -53,37 +158,34 @@ export class ReplenishBinanceService implements OnModuleInit {
 
       this.logger.log(`Спот USDT: ${spotFree + spotLocked}`);
 
-      // 2. Funding баланс - POST сурамы менен
+      // 2. Funding баланс - GET сурамы менен
       let fundingFree = 0;
       try {
         const timestamp = Date.now();
 
-        // Funding баланс алуу үчүн параметрлер
         const params = {
           timestamp,
           recvWindow: 60000,
         };
 
-        // Подпись генерациясы
-        const sortedKeys = Object.keys(params).sort();
-        const rawQueryString = sortedKeys
+        // Сортировка жана signature генерациясы
+        const queryString = Object.keys(params)
+          .sort()
           .map((key) => `${key}=${params[key]}`)
           .join('&');
 
         const signature = crypto
           .createHmac('sha256', this.binance_secret_key)
-          .update(rawQueryString)
+          .update(queryString)
           .digest('hex');
 
-        // POST сурамы (GET эмес!)
+        // GET сурамы (POST эмес!)
         const fundingResponse = await firstValueFrom(
-          this.httpService.post(
+          this.httpService.get(
             'https://api.binance.com/sapi/v1/asset/get-funding-asset',
-            null, // body (жок)
             {
               headers: {
                 'X-MBX-APIKEY': this.binance_api_key,
-                'Content-Type': 'application/json',
               },
               params: {
                 ...params,
@@ -93,22 +195,13 @@ export class ReplenishBinanceService implements OnModuleInit {
           ),
         );
 
-        // Жоопту иштетүү
         const fundingData = fundingResponse.data;
-        this.logger.log('Funding жообу:', fundingData);
-
         const fundingUSDT = fundingData.find((f: any) => f.asset === 'USDT');
         fundingFree = fundingUSDT ? parseFloat(fundingUSDT.free) : 0;
 
         this.logger.log(`Funding USDT: ${fundingFree}`);
       } catch (e) {
         this.logger.warn(`Funding баланс алуу мүмкүн эмес: ${e.message}`);
-        if (e.response?.data) {
-          this.logger.error(`Funding катасы:`, e.response.data);
-        }
-
-        // Эгер funding иштебесе, башка эндпоинт менен аракет кылабыз
-        await this.tryAlternativeFundingBalance();
       }
 
       // 3. Total
@@ -670,20 +763,24 @@ export class ReplenishBinanceService implements OnModuleInit {
       const deposits = response.data;
 
       // Форматируем для удобного чтения
-      return deposits.map((deposit: any) => ({
-        id: deposit.id,
-        coin: deposit.coin,
-        amount: parseFloat(deposit.amount),
-        network: deposit.network,
-        status: this.getDepositStatusText(deposit.status),
-        statusCode: deposit.status,
-        address: deposit.address,
-        fromAddress: deposit.sourceAddress || 'Не указан',
-        txId: deposit.txId,
-        time: new Date(deposit.insertTime).toLocaleString(),
-        insertTime: deposit.insertTime,
-        confirmTimes: deposit.confirmTimes,
-      }));
+      return deposits.map((deposit: any) => {
+        console.log(deposit, 'deposite history');
+
+        return {
+          id: deposit.id,
+          coin: deposit.coin,
+          amount: parseFloat(deposit.amount),
+          network: deposit.network,
+          status: this.getDepositStatusText(deposit.status),
+          statusCode: deposit.status,
+          address: deposit.address,
+          fromAddress: deposit.sourceAddress || 'Не указан',
+          txId: deposit.txId,
+          time: new Date(deposit.insertTime).toLocaleString(),
+          insertTime: deposit.insertTime,
+          confirmTimes: deposit.confirmTimes,
+        };
+      });
     } catch (error) {
       console.log(error, 'error');
 
@@ -692,6 +789,78 @@ export class ReplenishBinanceService implements OnModuleInit {
       this.logger.error(`Error status: ${error.response?.status}`);
       this.logger.error(`Error message: ${error.message}`);
       throw new Error(`Failed to get deposit history: ${error.message}`);
+    }
+  }
+
+  async getOrderHistory(params?: GetOrderHistoryQueryDto) {
+    try {
+      const timestamp = Date.now();
+
+      // Формируем параметры запроса
+      const queryParams: Record<string, any> = {
+        timestamp,
+        ...(params?.symbol && { symbol: params.symbol.toUpperCase() }),
+        ...(params?.orderId && { orderId: params.orderId }),
+        ...(params?.startTime && { startTime: params.startTime }),
+        ...(params?.endTime && { endTime: params.endTime }),
+        ...(params?.limit && { limit: Math.min(params.limit, 1000) }),
+        ...(params?.recvWindow && { recvWindow: params.recvWindow }),
+      };
+
+      // Сортируем ключи
+      const sortedKeys = Object.keys(queryParams).sort();
+
+      // RAW query string для подписи
+      const rawQueryString = sortedKeys
+        .map((key) => `${key}=${queryParams[key]}`)
+        .join('&');
+
+      // Генерируем подпись
+      const signature = crypto
+        .createHmac('sha256', this.binance_secret_key)
+        .update(rawQueryString)
+        .digest('hex');
+
+      // Encoded query string для URL
+      const encodedQueryString = sortedKeys
+        .map((key) => `${key}=${encodeURIComponent(queryParams[key])}`)
+        .join('&');
+
+      // URL для истории ордеров
+      const finalUrl = `https://api.binance.com/api/v3/allOrders?${encodedQueryString}&signature=${signature}`;
+
+      const response = await firstValueFrom(
+        this.httpService.get(finalUrl, {
+          headers: {
+            'X-MBX-APIKEY': this.binance_api_key,
+          },
+        }),
+      );
+
+      // Форматируем ответ
+      return response.data.map((order: any) => {
+        console.log(order, 'order history');
+
+        return {
+          orderId: order.orderId,
+          symbol: order.symbol,
+          price: parseFloat(order.price),
+          origQty: parseFloat(order.origQty),
+          executedQty: parseFloat(order.executedQty),
+          status: order.status,
+          type: order.type,
+          side: order.side,
+          time: new Date(order.time).toLocaleString(),
+          updateTime: new Date(order.updateTime).toLocaleString(),
+          isWorking: order.isWorking,
+        };
+      });
+    } catch (error) {
+      this.logger.error(
+        'Error getting order history:',
+        error.response?.data || error.message,
+      );
+      throw new Error(`Failed to get order history: ${error.message}`);
     }
   }
 

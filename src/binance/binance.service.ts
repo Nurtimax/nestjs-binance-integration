@@ -10,6 +10,7 @@ import { DepositsQuery } from './dto/deposits-query.dto';
 import { GetSuccessDepositQueryDto } from './dto/get-success-deposit-query.dto';
 import { getUsdtReceivedDto } from './dto/get-usdt-received.dto';
 import { BinanceConfig } from 'src/configs/services/binance.config';
+import { GetOrderHistoryQueryDto } from './dto/get-order-history.dto';
 
 @Injectable()
 export class BinanceService implements OnModuleInit {
@@ -49,6 +50,22 @@ export class BinanceService implements OnModuleInit {
       status: statusNum,
       limit: limitNum,
     });
+  }
+
+  getOrderHistory(query: GetOrderHistoryQueryDto) {
+    return this.replenishService.getOrderHistory(query);
+  }
+
+  account() {
+    return this.replenishService.account();
+  }
+
+  order() {
+    return this.replenishService.order();
+  }
+
+  allOrders(params?: GetOrderHistoryQueryDto) {
+    return this.replenishService.allOrders(params);
   }
 
   getAllBalancesAcrossProducts() {

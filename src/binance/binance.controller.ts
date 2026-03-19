@@ -4,6 +4,7 @@ import { BinanceService } from './binance.service';
 import { DepositsQuery } from './dto/deposits-query.dto';
 import { GetSuccessDepositQueryDto } from './dto/get-success-deposit-query.dto';
 import { getUsdtReceivedDto } from './dto/get-usdt-received.dto';
+import { GetOrderHistoryQueryDto } from './dto/get-order-history.dto';
 
 @Controller('binance')
 export class BinanceController {
@@ -17,6 +18,21 @@ export class BinanceController {
   @Get('balance/all-products')
   async getAllBalances() {
     return this.binanceService.getAllBalancesAcrossProducts();
+  }
+
+  @Get('account')
+  account() {
+    return this.binanceService.account();
+  }
+
+  @Get('order')
+  order() {
+    return this.binanceService.order();
+  }
+
+  @Get('allOrders')
+  allOrders(@Query() query: GetOrderHistoryQueryDto) {
+    return this.binanceService.allOrders(query);
   }
 
   @Get('check-ip')
@@ -42,6 +58,11 @@ export class BinanceController {
   @Get('deposits')
   getDeposits(@Query() query: DepositsQuery) {
     return this.binanceService.getDeposits(query);
+  }
+
+  @Get('order-history')
+  getOrderHistory(@Query() query: GetOrderHistoryQueryDto) {
+    return this.binanceService.getOrderHistory(query);
   }
 
   /**
