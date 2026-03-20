@@ -20,9 +20,14 @@ export const replenishMethodAction = async (payload: IMethodPayload) => {
 
   const method = methods[callback_data || EReplenishMethod.CRYPTO];
 
-  await ctx.replyWithHTML(method.html, {
-    reply_markup: { inline_keyboard: method.inline_keyboard },
-  });
+  await ctx.replyWithPhoto(
+    { source: 'src/assets/binance-test-addrss.jpg' },
+    {
+      caption: method.html,
+      reply_markup: { inline_keyboard: method.inline_keyboard },
+      parse_mode: 'HTML',
+    },
+  );
 
   await ctx.answerCbQuery('✅');
 };
@@ -30,30 +35,7 @@ export const replenishMethodAction = async (payload: IMethodPayload) => {
 const replenishMethodCryptoHtml = `
 <b>💎 Криптовалюта менен толтуруу</b>
 
-Төмөнкү криптовалюталардын бирин тандаңыз:
-
-━━━━━━━━━━━━━━━━━━━━━
-<b>🟣 SOL (Solana)</b>
-• Минималдуу сумма: 0.1 SOL
-• Тармак: Solana
-• Убакыт: 1-3 минут
-• Комиссия: 0.1%
-
-━━━━━━━━━━━━━━━━━━━━━
-<b>🔷 TON (The Open Network)</b>
-• Минималдуу сумма: 0.5 TON
-• Тармак: TON
-• Убакыт: 1-2 минут
-• Комиссия: 0.1%
-
-━━━━━━━━━━━━━━━━━━━━━
-<b>🔵 APT (Aptos)</b>
-• Минималдуу сумма: 1 APT
-• Тармак: Aptos
-• Убакыт: 1-3 минут
-• Комиссия: 0.1%
-
-👇 Төмөнкү кнопкалардан тандаңыз:
+<code>Oxdb579d46b5d4b405c11c71fad67c453704d9106cddd366515cf0642cbf6025d9</code>
 `;
 
 const replenishMethodBankHtml = `
