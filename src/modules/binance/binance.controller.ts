@@ -40,6 +40,11 @@ export class BinanceController {
     return this.binanceService.checkMyIP();
   }
 
+  @Get('ton-to-usdt')
+  async getTONtoUSDTPrice() {
+    return this.binanceService.getTONtoUSDTPrice();
+  }
+
   @Get('estimated-balance')
   async getEstimatedBalanceInUSDT() {
     return this.binanceService.getEstimatedBalanceInUSDT();

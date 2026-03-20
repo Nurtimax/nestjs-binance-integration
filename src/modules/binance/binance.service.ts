@@ -11,6 +11,7 @@ import { GetSuccessDepositQueryDto } from './dto/get-success-deposit-query.dto';
 import { getUsdtReceivedDto } from './dto/get-usdt-received.dto';
 import { BinanceConfig } from 'src/configs/services/binance.config';
 import { GetOrderHistoryQueryDto } from './dto/get-order-history.dto';
+import { ECrypto } from '../telegram/actions/enums/crypto.enum';
 
 @Injectable()
 export class BinanceService implements OnModuleInit {
@@ -66,6 +67,14 @@ export class BinanceService implements OnModuleInit {
 
   allOrders(params?: GetOrderHistoryQueryDto) {
     return this.replenishService.allOrders(params);
+  }
+
+  getTONtoUSDTPrice() {
+    return this.replenishService.getTONtoUSDTPrice();
+  }
+
+  getCryptoPrice(crypto: ECrypto) {
+    return this.replenishService.getCryptoPrice(crypto);
   }
 
   getAllBalancesAcrossProducts() {

@@ -10,6 +10,10 @@ import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 import { BinanceConfig } from 'src/configs/services/binance.config';
 import { GetOrderHistoryQueryDto } from '../dto/get-order-history.dto';
+import {
+  cryptoToSymbol,
+  ECrypto,
+} from 'src/modules/telegram/actions/enums/crypto.enum';
 
 @Injectable()
 export class ReplenishBinanceService implements OnModuleInit {
@@ -143,6 +147,39 @@ export class ReplenishBinanceService implements OnModuleInit {
         message: error?.message,
         error,
       };
+    }
+  }
+
+  async getTONtoUSDTPrice() {
+    try {
+      const response = await firstValueFrom(
+        this.httpService.get(
+          'https://api.binance.com/api/v3/ticker/price?symbol=TONUSDT',
+        ),
+      );
+
+      const price = parseFloat(response.data.price);
+      return price;
+    } catch (error) {
+      this.logger.error('Error getting TON/USDT price:', error.message);
+      throw new Error('Failed to get TON/USDT price');
+    }
+  }
+
+  async getCryptoPrice(crypto: ECrypto) {
+    try {
+      const symbol = cryptoToSymbol[crypto];
+      const response = await firstValueFrom(
+        this.httpService.get(
+          `https://api.binance.com/api/v3/ticker/price?symbol=${symbol}`,
+        ),
+      );
+
+      const price = parseFloat(response.data.price);
+      return price;
+    } catch (error) {
+      this.logger.error(`Error getting ${crypto}/USDT price:`, error.message);
+      throw new Error(`Failed to get ${crypto}/USDT price`);
     }
   }
 

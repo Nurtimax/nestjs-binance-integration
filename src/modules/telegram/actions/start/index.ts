@@ -1,5 +1,6 @@
 import { SceneContext } from 'telegraf/scenes';
 import { startWelcomeText } from './text/welcome-text';
+import { START_KEYBOARDS } from './keyboards';
 
 interface IStartPayload {
   ctx: SceneContext;
@@ -16,5 +17,7 @@ export const startAction = async (payload: IStartPayload) => {
 
   const text = startWelcomeText(userName);
 
-  await ctx.replyWithHTML(text);
+  const inline_keyboard = START_KEYBOARDS;
+
+  await ctx.replyWithHTML(text, { reply_markup: { inline_keyboard } });
 };
