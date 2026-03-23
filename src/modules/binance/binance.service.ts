@@ -12,6 +12,8 @@ import { getUsdtReceivedDto } from './dto/get-usdt-received.dto';
 import { BinanceConfig } from 'src/configs/services/binance.config';
 import { GetOrderHistoryQueryDto } from './dto/get-order-history.dto';
 import { ECrypto } from '../telegram/actions/enums/crypto.enum';
+import { WithdrawAnotherUserDto } from './dto/withdraw-another-user.dto';
+import { WithdrawFeeDto } from './dto/withdraw-fee.dto';
 
 @Injectable()
 export class BinanceService implements OnModuleInit {
@@ -51,6 +53,14 @@ export class BinanceService implements OnModuleInit {
       status: statusNum,
       limit: limitNum,
     });
+  }
+
+  withdrawToAnotherUser(withdrawAnotherUserDto: WithdrawAnotherUserDto) {
+    return this.replenishService.withdrawToAnotherUser(withdrawAnotherUserDto);
+  }
+
+  getWithdrawFee(withdrawFeeDto: WithdrawFeeDto) {
+    return this.replenishService.getWithdrawFee(withdrawFeeDto);
   }
 
   getOrderHistory(query: GetOrderHistoryQueryDto) {

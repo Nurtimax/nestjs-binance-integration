@@ -3,7 +3,13 @@
 /* eslint-disable @typescript-eslint/no-unsafe-call */
 /* eslint-disable @typescript-eslint/no-unsafe-member-access */
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import {
+  HttpException,
+  HttpStatus,
+  Injectable,
+  Logger,
+  OnModuleInit,
+} from '@nestjs/common';
 import { Spot } from '@binance/connector';
 import * as crypto from 'crypto';
 import { HttpService } from '@nestjs/axios';
@@ -14,6 +20,8 @@ import {
   cryptoToSymbol,
   ECrypto,
 } from 'src/modules/telegram/actions/enums/crypto.enum';
+import { WithdrawAnotherUserDto } from '../dto/withdraw-another-user.dto';
+import { WithdrawFeeDto } from '../dto/withdraw-fee.dto';
 
 @Injectable()
 export class ReplenishBinanceService implements OnModuleInit {
@@ -180,6 +188,154 @@ export class ReplenishBinanceService implements OnModuleInit {
     } catch (error) {
       this.logger.error(`Error getting ${crypto}/USDT price:`, error.message);
       throw new Error(`Failed to get ${crypto}/USDT price`);
+    }
+  }
+
+  signRequest(params: Record<string, any>): {
+    headers: any;
+    params: Record<string, unknown>;
+  } {
+    // Устанавливаем timestamp в миллисекундах (обязательное поле)
+    if (!params.timestamp) {
+      params.timestamp = Date.now();
+    }
+
+    // Добавляем recvWindow (опционально, стандарт 5000, но можно увеличить до 60000)
+    if (!params.recvWindow) {
+      params.recvWindow = 5000;
+    }
+
+    // Сортировка ключей для построения queryString (важно для подписи)
+    const sortedParams = Object.keys(params)
+      .sort()
+      .reduce(
+        (acc, key) => {
+          acc[key] = params[key];
+          return acc;
+        },
+        {} as Record<string, any>,
+      );
+
+    // Генерируем подпись
+    const signature = this.generateSignature(sortedParams);
+
+    // Возвращаем заголовки и параметры для передачи в axios
+    return {
+      headers: {
+        'X-MBX-APIKEY': this.binance_api_key,
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      // Возвращаем строку с добавленной подписью
+      params: {
+        ...sortedParams,
+        signature,
+      },
+    };
+  }
+
+  async withdrawToAnotherUser(withdrawAnotherUserDto: WithdrawAnotherUserDto) {
+    const { coin, address, amount, network } = withdrawAnotherUserDto;
+    // Параметры для эндпоинта вывода
+    // Документация: POST /sapi/v1/capital/withdraw/apply
+    const params = {
+      coin: coin,
+      address: address,
+      amount: amount,
+      network: network,
+      // Если адрес это email (внутренний перевод Binance), используйте параметр 'internal'?
+      // Обычно внутренние переводы определяются автоматически, если адрес это email.
+    };
+
+    // Подписываем запрос
+    const { headers, params: signedParams } = this.signRequest(params);
+
+    try {
+      const response = await this.httpService.axiosRef.post(
+        'https://api.binance.com/sapi/v1/capital/withdraw/apply',
+        signedParams, // Тело запроса
+        { headers }, // Заголовки
+      );
+
+      return response.data;
+    } catch (error) {
+      // Обработка ошибок Binance (в ответе приходят с кодом 200, но с полем 'code')
+      if (error.response?.data) {
+        throw new HttpException(error.response.data, HttpStatus.BAD_REQUEST);
+      }
+      throw new HttpException(error.message, HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+  }
+
+  async signedGetRequest(endpoint: string, params: Record<string, any> = {}) {
+    const { headers, params: signedParams } = this.signRequest(params);
+    const url = `https://api.binance.com/${endpoint}`;
+
+    try {
+      const response = await this.httpService.axiosRef.get(url, {
+        headers,
+        params: signedParams, // GET-параметры с подписью
+      });
+
+      return response.data;
+    } catch (error) {
+      this.logger.error(`GET request failed for ${endpoint}: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Получение комиссии за вывод для конкретной монеты и сети
+   * @param coin Тикер монеты (например, 'USDT')
+   * @param network Сеть (например, 'APT')
+   * @returns Объект с комиссией, минимальной суммой и др.
+   */
+  async getWithdrawFee(withdrawFeeDto: WithdrawFeeDto) {
+    const { coin, network } = withdrawFeeDto;
+    try {
+      // 1. Получаем полную конфигурацию по всем монетам
+      const config = await this.signedGetRequest(
+        '/sapi/v1/capital/config/getall',
+        {
+          timestamp: Date.now(),
+          recvWindow: 5000,
+        },
+      );
+
+      // 2. Ищем нашу монету
+      const coinConfig = config.find(
+        (item: any) => item.coin === coin.toUpperCase(),
+      );
+
+      if (!coinConfig) {
+        throw new Error(`Coin ${coin} not found`);
+      }
+
+      // 3. Ищем нужную сеть внутри монеты
+      const networkConfig = coinConfig.networkList.find(
+        (net: any) => net.network === network.toUpperCase(),
+      );
+
+      if (!networkConfig) {
+        throw new Error(`Network ${network} for coin ${coin} not found`);
+      }
+
+      // 4. Возвращаем информацию о комиссии и лимитах
+      return {
+        coin: coinConfig.coin,
+        network: networkConfig.network,
+        withdrawFee: networkConfig.withdrawFee, // ← комиссия за вывод
+        withdrawMin: networkConfig.withdrawMin, // минимальная сумма вывода
+        withdrawMax: networkConfig.withdrawMax, // максимальная сумма вывода
+        withdrawIntegerMultiple: networkConfig.withdrawIntegerMultiple, // шаг суммы
+        withdrawEnable: networkConfig.withdrawEnable, // доступен ли вывод
+        isDefault: networkConfig.isDefault, // сеть по умолчанию
+      };
+    } catch (error) {
+      this.logger.error(`Failed to get withdraw fee: ${error.message}`);
+      throw new HttpException(
+        `Could not retrieve withdrawal information: ${error.message}`,
+        HttpStatus.BAD_REQUEST,
+      );
     }
   }
 

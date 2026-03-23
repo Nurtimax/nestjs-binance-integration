@@ -1,10 +1,12 @@
 /* eslint-disable @typescript-eslint/no-unsafe-return */
-import { Controller, Get, Param, Query } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
 import { BinanceService } from './binance.service';
 import { DepositsQuery } from './dto/deposits-query.dto';
 import { GetSuccessDepositQueryDto } from './dto/get-success-deposit-query.dto';
 import { getUsdtReceivedDto } from './dto/get-usdt-received.dto';
 import { GetOrderHistoryQueryDto } from './dto/get-order-history.dto';
+import { WithdrawAnotherUserDto } from './dto/withdraw-another-user.dto';
+import { WithdrawFeeDto } from './dto/withdraw-fee.dto';
 
 @Controller('binance')
 export class BinanceController {
@@ -148,5 +150,17 @@ export class BinanceController {
   @Get('stats')
   async getStats(@Query('days') days?: string) {
     return this.binanceService.getStats(days);
+  }
+
+  @Get('withdraw-fee')
+  async getWithdrawFee(@Query() withdrawFeeDto: WithdrawFeeDto) {
+    return this.binanceService.getWithdrawFee(withdrawFeeDto);
+  }
+
+  @Post('withdraw-another-user')
+  withdrawToAnotherUser(
+    @Body() withdrawAnotherUserDto: WithdrawAnotherUserDto,
+  ) {
+    return this.binanceService.withdrawToAnotherUser(withdrawAnotherUserDto);
   }
 }
