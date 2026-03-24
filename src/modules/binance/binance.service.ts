@@ -14,6 +14,7 @@ import { GetOrderHistoryQueryDto } from './dto/get-order-history.dto';
 import { ECrypto } from '../telegram/actions/enums/crypto.enum';
 import { WithdrawAnotherUserDto } from './dto/withdraw-another-user.dto';
 import { WithdrawFeeDto } from './dto/withdraw-fee.dto';
+import { EstimateBalanceBinanceService } from './services/estimate-balance.binance.service';
 
 @Injectable()
 export class BinanceService implements OnModuleInit {
@@ -23,6 +24,7 @@ export class BinanceService implements OnModuleInit {
     private readonly replenishService: ReplenishBinanceService,
     private readonly withdrawService: WithdrawBinanceService,
     private readonly binanceConfig: BinanceConfig,
+    private readonly estimateBalanceBinanceService: EstimateBalanceBinanceService,
   ) {}
 
   onModuleInit() {
@@ -53,6 +55,30 @@ export class BinanceService implements OnModuleInit {
       status: statusNum,
       limit: limitNum,
     });
+  }
+
+  getSimpleEarn() {
+    return this.estimateBalanceBinanceService.getSimpleEarn();
+  }
+
+  getMargin() {
+    return this.estimateBalanceBinanceService.getMargin();
+  }
+
+  getFuture() {
+    return this.estimateBalanceBinanceService.getFuture();
+  }
+
+  getAccountSpot() {
+    return this.estimateBalanceBinanceService.getAccountSpot();
+  }
+
+  getFundingAsset() {
+    return this.estimateBalanceBinanceService.getFundingAsset();
+  }
+
+  estimatedBalance() {
+    return this.estimateBalanceBinanceService.estimatedBalance();
   }
 
   withdrawToAnotherUser(withdrawAnotherUserDto: WithdrawAnotherUserDto) {

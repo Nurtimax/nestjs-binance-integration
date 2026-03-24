@@ -22,6 +22,31 @@ export class BinanceController {
     return this.binanceService.getAllBalancesAcrossProducts();
   }
 
+  @Get('simple-earn')
+  getSimpleEarn() {
+    return this.binanceService.getSimpleEarn();
+  }
+
+  @Get('margin')
+  getMargin() {
+    return this.binanceService.getMargin();
+  }
+
+  @Get('future')
+  getFuture() {
+    return this.binanceService.getFuture();
+  }
+
+  @Get('spot')
+  getAccountSpot() {
+    return this.binanceService.getAccountSpot();
+  }
+
+  @Get('funding-asset')
+  getFundingAsset() {
+    return this.binanceService.getFundingAsset();
+  }
+
   @Get('account')
   account() {
     return this.binanceService.account();
@@ -49,7 +74,7 @@ export class BinanceController {
 
   @Get('estimated-balance')
   async getEstimatedBalanceInUSDT() {
-    return this.binanceService.getEstimatedBalanceInUSDT();
+    return this.binanceService.estimatedBalance();
   }
 
   @Get('get-balance-history')

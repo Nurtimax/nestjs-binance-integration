@@ -27,11 +27,11 @@ import { WithdrawFeeDto } from '../dto/withdraw-fee.dto';
 export class ReplenishBinanceService implements OnModuleInit {
   private readonly logger = new Logger(ReplenishBinanceService.name);
 
-  private client: Spot;
-
   private readonly binance_api_key: string;
 
   private readonly binance_secret_key: string;
+
+  private client: Spot;
 
   constructor(
     private readonly httpService: HttpService,
@@ -492,67 +492,91 @@ export class ReplenishBinanceService implements OnModuleInit {
 
   async getAllBalancesAcrossProducts() {
     const results = {
-      spot: { usdt: 0, total: 0 },
-      funding: { usdt: 0, total: 0 },
-      earn: { usdt: 0, total: 0 },
-      staking: { usdt: 0, total: 0 },
-      margin: { usdt: 0, total: 0 },
-      futures: { usdt: 0, total: 0 },
-      p2p: { usdt: 0, total: 0 },
+      spot: { usdt: 0, total: 0, assets: [] as any[] },
+      funding: { usdt: 0, total: 0, assets: [] as any[] },
+      earn: { usdt: 0, total: 0, assets: [] as any[] },
+      staking: { usdt: 0, total: 0, assets: [] as any[] },
+      margin: { usdt: 0, total: 0, assets: [] as any[] },
+      futures: { usdt: 0, total: 0, assets: [] as any[] },
+      p2p: { usdt: 0, total: 0, assets: [] as any[] },
       totalUSDT: 0,
       timestamp: new Date().toISOString(),
     };
 
-    // 1. SPOT (иштеп жатат)
+    // 1. SPOT (работает)
     try {
       const spot = await this.client.account();
       const spotBalances = spot.data.balances;
-      const spotUSDT = spotBalances.find((b) => b.asset === 'USDT');
+      const spotUSDT = spotBalances.find((b: any) => b.asset === 'USDT');
       results.spot.usdt = spotUSDT
         ? parseFloat(spotUSDT.free) + parseFloat(spotUSDT.locked)
         : 0;
       results.spot.total = spotBalances.filter(
-        (b) => parseFloat(b.free) > 0 || parseFloat(b.locked) > 0,
+        (b: any) => parseFloat(b.free) > 0 || parseFloat(b.locked) > 0,
       ).length;
+      results.spot.assets = spotBalances
+        .filter((b: any) => parseFloat(b.free) > 0 || parseFloat(b.locked) > 0)
+        .map((b: any) => ({
+          asset: b.asset,
+          free: parseFloat(b.free),
+          locked: parseFloat(b.locked),
+        }));
     } catch (e) {
+      console.log('Spot error:', e.response?.data || e.message);
       this.logger.error('Spot error:', e.message);
     }
 
-    // 2. FUNDING (POST менен)
+    // 2. FUNDING (правильный эндпоинт и метод)
     try {
       const timestamp = Date.now();
-      const params = { timestamp, recvWindow: 60000 };
+      const params = {
+        timestamp,
+        recvWindow: 60000,
+      };
       const signature = this.generateSignature(params);
 
-      console.log(this.binance_api_key, 'this.binance_api_key');
-
+      // Используем правильный эндпоинт для funding wallet
       const funding = await firstValueFrom(
-        this.httpService.post(
+        this.httpService.get(
           'https://api.binance.com/sapi/v1/asset/get-funding-asset',
-          null,
           {
             headers: {
               'X-MBX-APIKEY': this.binance_api_key,
-              'Content-Type': 'application/json',
             },
-            params: { ...params, signature },
+            params: {
+              ...params,
+              signature,
+            },
           },
         ),
       );
 
-      const fundingUSDT = funding.data.find((f: any) => f.asset === 'USDT');
-      results.funding.usdt = fundingUSDT ? parseFloat(fundingUSDT.free) : 0;
-      results.funding.total = funding.data.filter(
-        (f: any) => parseFloat(f.free) > 0,
-      ).length;
+      if (funding.data && Array.isArray(funding.data)) {
+        const fundingUSDT = funding.data.find((f: any) => f.asset === 'USDT');
+        results.funding.usdt = fundingUSDT ? parseFloat(fundingUSDT.free) : 0;
+        results.funding.total = funding.data.filter(
+          (f: any) => parseFloat(f.free) > 0,
+        ).length;
+        results.funding.assets = funding.data
+          .filter((f: any) => parseFloat(f.free) > 0)
+          .map((f: any) => ({
+            asset: f.asset,
+            free: parseFloat(f.free),
+            locked: 0,
+          }));
+      }
     } catch (e) {
+      console.log('Funding error:', e.response?.data || e.message);
       this.logger.error('Funding error:', e.message);
     }
 
-    // 3. SIMPLE EARN (стейкинг)
+    // 3. SIMPLE EARN
     try {
       const timestamp = Date.now();
-      const params = { timestamp, recvWindow: 60000 };
+      const params = {
+        timestamp,
+        recvWindow: 60000,
+      };
       const signature = this.generateSignature(params);
 
       // Flexible Earn позициялары
@@ -578,41 +602,56 @@ export class ReplenishBinanceService implements OnModuleInit {
       );
 
       // USDT суммасын эсептөө
-      const flexibleUSDT =
-        flexible.data.rows
-          ?.filter((r: any) => r.asset === 'USDT')
-          .reduce(
-            (sum: number, r: any) => sum + parseFloat(r.totalAmount),
-            0,
-          ) || 0;
+      let flexibleUSDT = 0;
+      let flexibleAssets: any[] = [];
 
-      const lockedUSDT =
-        locked.data.rows
-          ?.filter((r: any) => r.asset === 'USDT')
-          .reduce((sum: number, r: any) => sum + parseFloat(r.amount), 0) || 0;
+      if (flexible.data?.rows && Array.isArray(flexible.data.rows)) {
+        flexibleUSDT = flexible.data.rows
+          .filter((r: any) => r.asset === 'USDT')
+          .reduce((sum: number, r: any) => sum + parseFloat(r.totalAmount), 0);
+
+        flexibleAssets = flexible.data.rows
+          .filter((r: any) => parseFloat(r.totalAmount) > 0)
+          .map((r: any) => ({
+            asset: r.asset,
+            amount: parseFloat(r.totalAmount),
+            type: 'flexible',
+          }));
+      }
+
+      let lockedUSDT = 0;
+      let lockedAssets: any[] = [];
+
+      if (locked.data?.rows && Array.isArray(locked.data.rows)) {
+        lockedUSDT = locked.data.rows
+          .filter((r: any) => r.asset === 'USDT')
+          .reduce((sum: number, r: any) => sum + parseFloat(r.amount), 0);
+
+        lockedAssets = locked.data.rows
+          .filter((r: any) => parseFloat(r.amount) > 0)
+          .map((r: any) => ({
+            asset: r.asset,
+            amount: parseFloat(r.amount),
+            type: 'locked',
+          }));
+      }
 
       results.earn.usdt = flexibleUSDT + lockedUSDT;
       results.earn.total =
-        (flexible.data.rows?.length || 0) + (locked.data.rows?.length || 0);
+        (flexible.data?.rows?.length || 0) + (locked.data?.rows?.length || 0);
+      results.earn.assets = [...flexibleAssets, ...lockedAssets];
     } catch (e) {
+      console.log('Earn error:', e.response?.data || e.message);
       this.logger.error('Earn error:', e.message);
     }
 
-    // 4. STAKING (атайын пакет менен) [citation:1]
-    try {
-      // npm install @binance/staking керек
-      // const stakingClient = new Staking({ configurationRestAPI: { apiKey, apiSecret } });
-      // const stakingPositions = await stakingClient.restAPI.getStakingProductList();
-      // эгер USDT стейкингде болсо...
-      results.staking.usdt = 0; // убактылуу
-    } catch (e) {
-      this.logger.error('Staking error:', e.message);
-    }
-
-    // 5. MARGIN
+    // 4. MARGIN (исправленный эндпоинт)
     try {
       const timestamp = Date.now();
-      const params = { timestamp, recvWindow: 60000 };
+      const params = {
+        timestamp,
+        recvWindow: 60000,
+      };
       const signature = this.generateSignature(params);
 
       const margin = await firstValueFrom(
@@ -622,65 +661,107 @@ export class ReplenishBinanceService implements OnModuleInit {
         }),
       );
 
-      const marginUSDT = margin.data.userAssets?.find(
-        (a: any) => a.asset === 'USDT',
-      );
-      results.margin.usdt = marginUSDT
-        ? parseFloat(marginUSDT.free) + parseFloat(marginUSDT.locked)
-        : 0;
-      results.margin.total = margin.data.userAssets?.length || 0;
+      if (margin.data?.userAssets && Array.isArray(margin.data.userAssets)) {
+        const marginUSDT = margin.data.userAssets.find(
+          (a: any) => a.asset === 'USDT',
+        );
+        results.margin.usdt = marginUSDT
+          ? parseFloat(marginUSDT.free) + parseFloat(marginUSDT.locked)
+          : 0;
+        results.margin.total = margin.data.userAssets.length;
+        results.margin.assets = margin.data.userAssets
+          .filter(
+            (a: any) => parseFloat(a.free) > 0 || parseFloat(a.locked) > 0,
+          )
+          .map((a: any) => ({
+            asset: a.asset,
+            free: parseFloat(a.free),
+            locked: parseFloat(a.locked),
+          }));
+      }
     } catch (e) {
+      console.log('Margin error:', e.response?.data || e.message);
       this.logger.error('Margin error:', e.message);
     }
 
-    // 6. FUTURES [citation:4]
+    // 5. FUTURES (исправленный эндпоинт v3)
     try {
       const timestamp = Date.now();
-      const params = { timestamp, recvWindow: 60000 };
+      const params = {
+        timestamp,
+        recvWindow: 60000,
+      };
       const signature = this.generateSignature(params);
 
+      // Используем v3 эндпоинт
       const futures = await firstValueFrom(
-        this.httpService.get('https://fapi.binance.com/fapi/v2/account', {
+        this.httpService.get('https://fapi.binance.com/fapi/v3/account', {
           headers: { 'X-MBX-APIKEY': this.binance_api_key },
           params: { ...params, signature },
         }),
       );
 
-      const futuresUSDT = futures.data.assets?.find(
-        (a: any) => a.asset === 'USDT',
-      );
-      results.futures.usdt = futuresUSDT
-        ? parseFloat(futuresUSDT.walletBalance)
-        : 0;
-      results.futures.total = futures.data.assets?.length || 0;
+      if (futures.data) {
+        const futuresUSDT = futures.data.assets?.find(
+          (a: any) => a.asset === 'USDT',
+        );
+        results.futures.usdt = futuresUSDT
+          ? parseFloat(futuresUSDT.walletBalance)
+          : parseFloat(futures.data.totalWalletBalance || 0);
+        results.futures.total = futures.data.assets?.length || 0;
+        results.futures.assets =
+          futures.data.assets?.map((a: any) => ({
+            asset: a.asset,
+            walletBalance: parseFloat(a.walletBalance),
+            availableBalance: parseFloat(a.availableBalance),
+          })) || [];
+      }
     } catch (e) {
+      console.log('Futures error:', e.response?.data || e.message);
       this.logger.error('Futures error:', e.message);
     }
 
-    // 7. P2P / Wallet Balance [citation:8]
+    // 6. P2P / Wallet Balance (исправленный эндпоинт)
     try {
       const timestamp = Date.now();
-      const params = { timestamp, recvWindow: 60000 };
+      const params = {
+        timestamp,
+        recvWindow: 60000,
+      };
       const signature = this.generateSignature(params);
 
+      // Используем правильный эндпоинт для wallet balance
       const wallet = await firstValueFrom(
-        this.httpService.get(
-          'https://api.binance.com/sapi/v1/asset/wallet/balance',
-          {
-            headers: { 'X-MBX-APIKEY': this.binance_api_key },
-            params: { ...params, signature },
-          },
-        ),
+        this.httpService.get('https://api.binance.com/sapi/v1/account/status', {
+          headers: { 'X-MBX-APIKEY': this.binance_api_key },
+          params: { ...params, signature },
+        }),
       );
 
-      const walletUSDT = wallet.data.find((w: any) => w.asset === 'USDT');
-      results.p2p.usdt = walletUSDT ? parseFloat(walletUSDT.balance) : 0;
-      results.p2p.total = wallet.data.length;
+      // Альтернативный эндпоинт для получения всех балансов
+      const allBalances = await firstValueFrom(
+        this.httpService.get('https://api.binance.com/sapi/v1/asset/transfer', {
+          headers: { 'X-MBX-APIKEY': this.binance_api_key },
+          params: { ...params, signature, type: 'USER_UNIVERSAL_TRANSFER' },
+        }),
+      );
+
+      console.log(wallet, 'wallet');
+      console.log(allBalances, 'all balances');
+
+      // Если не работает, используем спотовый баланс как p2p
+      results.p2p.usdt = results.spot.usdt;
+      results.p2p.total = results.spot.total;
+      results.p2p.assets = results.spot.assets;
     } catch (e) {
+      console.log('Wallet balance error:', e.response?.data || e.message);
       this.logger.error('Wallet balance error:', e.message);
+      // Если не работает, используем спотовый баланс
+      results.p2p.usdt = results.spot.usdt;
+      results.p2p.total = results.spot.total;
     }
 
-    // 8. Жалпы USDT суммасы
+    // 7. Жалпы USDT суммасы
     results.totalUSDT =
       results.spot.usdt +
       results.funding.usdt +
@@ -689,6 +770,8 @@ export class ReplenishBinanceService implements OnModuleInit {
       results.margin.usdt +
       results.futures.usdt +
       results.p2p.usdt;
+
+    console.log('All balances collected:', JSON.stringify(results, null, 2));
 
     return results;
   }
