@@ -7,6 +7,7 @@ import { getUsdtReceivedDto } from './dto/get-usdt-received.dto';
 import { GetOrderHistoryQueryDto } from './dto/get-order-history.dto';
 import { WithdrawAnotherUserDto } from './dto/withdraw-another-user.dto';
 import { WithdrawFeeDto } from './dto/withdraw-fee.dto';
+import { FundingHistoryQueryDto } from './dto/funding-query.dto';
 
 @Controller('binance')
 export class BinanceController {
@@ -60,6 +61,11 @@ export class BinanceController {
   @Get('allOrders')
   allOrders(@Query() query: GetOrderHistoryQueryDto) {
     return this.binanceService.allOrders(query);
+  }
+
+  @Get('get-funding-history')
+  getFundingHistory(@Query() query: FundingHistoryQueryDto) {
+    return this.binanceService.getFundingHistory(query);
   }
 
   @Get('check-ip')

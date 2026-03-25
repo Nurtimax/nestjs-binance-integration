@@ -15,6 +15,8 @@ import { ECrypto } from '../telegram/actions/enums/crypto.enum';
 import { WithdrawAnotherUserDto } from './dto/withdraw-another-user.dto';
 import { WithdrawFeeDto } from './dto/withdraw-fee.dto';
 import { EstimateBalanceBinanceService } from './services/estimate-balance.binance.service';
+import { FundingHistoryBinanceService } from './services/funding-history.binance.service';
+import { FundingHistoryQueryDto } from './dto/funding-query.dto';
 
 @Injectable()
 export class BinanceService implements OnModuleInit {
@@ -25,6 +27,7 @@ export class BinanceService implements OnModuleInit {
     private readonly withdrawService: WithdrawBinanceService,
     private readonly binanceConfig: BinanceConfig,
     private readonly estimateBalanceBinanceService: EstimateBalanceBinanceService,
+    private readonly fundingHistoryBinanceService: FundingHistoryBinanceService,
   ) {}
 
   onModuleInit() {
@@ -55,6 +58,12 @@ export class BinanceService implements OnModuleInit {
       status: statusNum,
       limit: limitNum,
     });
+  }
+
+  getFundingHistory(fundingHistoryQueryDto: FundingHistoryQueryDto) {
+    return this.fundingHistoryBinanceService.getFundingHistory(
+      fundingHistoryQueryDto,
+    );
   }
 
   getSimpleEarn() {
