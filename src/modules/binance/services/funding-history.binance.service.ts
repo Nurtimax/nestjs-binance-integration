@@ -70,44 +70,31 @@ export class FundingHistoryBinanceService {
   async getFundingHistory(fundingHistoryQueryDto: FundingHistoryQueryDto) {
     const { page = 1, size = 50, endTime, startTime } = fundingHistoryQueryDto;
     try {
-      const timestamp = Date.now();
-      const params: any = {
-        type: 'FUNDING_MAIN', // или 'MAIN_FUNDING'
-        current: page,
-        size: Math.min(size, 100),
-        timestamp,
-      };
+      const responseDepositHistory = await this.client.fundingWallet();
+      console.log(responseDepositHistory.data, 'responseDepositHistory');
 
-      if (startTime) params.startTime = startTime;
-      if (endTime) params.endTime = endTime;
-
-      // Сортируем параметры для подписи
-      const sortedParams = Object.keys(params)
-        .sort()
-        .reduce((obj, key) => {
-          obj[key] = params[key];
-          return obj;
-        }, {});
-
-      const signature = this.generateSignature(sortedParams);
-      const queryString = new URLSearchParams({
-        ...params,
-        signature,
-      }).toString();
-
-      const response = await this.httpService.axiosRef.get(
-        `https://api.binance.com/sapi/v1/asset/transfer?${queryString}`,
+      const transferHistory = await this.client.userUniversalTransferHistory(
+        'MAIN_FUNDING', // или FUNDING_MAIN, FUNDING_UMFUTURE и т.д.
         {
-          headers: { 'X-MBX-APIKEY': this.binance_api_key },
+          //   startTime,
+          //   endTime,
+          current: page,
+          size: size,
         },
       );
 
-      return {
-        total: response.data.total,
-        rows: response.data.rows,
-        current: page,
-        size: size,
-      };
+      console.log(transferHistory.data, 'transferHistory');
+
+      const depositHistory = await this.client.depositHistory({
+        coin: 'USDT', // кааласаңыз, монетаны фильтрлей аласыз
+        startTime: startTime,
+        endTime: endTime,
+        limit: 1000,
+      });
+
+      console.log(depositHistory.data, 'depositHistory');
+
+      return responseDepositHistory.data;
     } catch (e) {
       console.error('Funding history error details:', {
         status: e.response?.status,
